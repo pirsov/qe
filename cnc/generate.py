@@ -172,65 +172,31 @@ def write_gcode(segs, pts, path: Path, lead: dict | None = None):
     a = lines.append
     a("%")
     a("O0001")
-    a("(DUCK CONTOUR)")
-    a("(SwanSoft Fanuc 0i-M)")
-    a("(After HOME leave G54 = 0,0,0)")
-    a("(XY scaled to fit ~280mm travel in -X -Y from HOME)")
-    a("(Z only <=0 — Z+ from HOME = Over travel)")
-    a("(RESET alarm, then AUTO / CYCLE START)")
-    a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
-    a(f"(Aluminum: S{SPINDLE:.0f}  Fxy={FEED_XY:.0f}  Fz={FEED_Z:.0f})")
-    a(f"(Depth Z{CUT_Z:.1f}  path X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}])")
-    a(f"(Lead-in/out R{r:.1f} outside part at P2)")
     a(f"{nxt()} G21 G17 G40 G49 G80 G90 G94")
     a(f"{nxt()} G54")
     a(f"{nxt()} T1 M06")
     a(f"{nxt()} S{SPINDLE:.0f} M03")
     a(f"{nxt()} M08")
-
-    # --- ZAHOD (approach from outside the part) ---
-    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}        (lead-in XY, outside)")
-    a(f"{nxt()} G00 Z{SAFE_Z:.1f}                 (Z0 = HOME height, do not go +Z)")
-    a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge)")
-    a(f"{nxt()} G01 G41 D1 {xyz(*L['start_in'])} F{FEED_XY:.0f}  (G41 on LINE)")
+    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}")
+    a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
+    a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}")
+    a(f"{nxt()} G01 G41 D1 {xyz(*L['start_in'])} F{FEED_XY:.0f}")
     i_in, j_in = ij(L["start_in"], L["c_in"])
-    a(
-        f"{nxt()} G03 {xyz(*P2)} I{i_in:.3f} J{j_in:.3f}    "
-        f"(LEAD-IN arc R{r:.0f} onto contour)"
-    )
-
-    comments = {
-        "head_right": "P2-P3 head right",
-        "R55": "P3-P4 R55 neck",
-        "25deg": "P4-P5 25deg breast",
-        "R115": "P5-P6 R115 back",
-        "5deg": "P6-P7 5deg to tail",
-        "lower_tail": "P7-P8 lower tail",
-        "R116": "P8-P9 R116",
-        "bottom": "P9-P10 bottom",
-        "R145": "P10-P11 R145 belly",
-        "80deg": "P11-P1 80deg left",
-        "R60": "P1-P2 R60 head",
-    }
+    a(f"{nxt()} G03 {xyz(*P2)} I{i_in:.3f} J{j_in:.3f}")
 
     for s in segs:
-        note = comments.get(s.name, s.name)
         if s.kind == "line":
-            a(f"{nxt()} G01 {xyz(*s.p1)}            ({note})")
+            a(f"{nxt()} G01 {xyz(*s.p1)}")
         else:
             i, j = ij(s.p0, s.center)
-            a(f"{nxt()} {s.g} {xyz(*s.p1)} I{i:.3f} J{j:.3f}    ({note})")
+            a(f"{nxt()} {s.g} {xyz(*s.p1)} I{i:.3f} J{j:.3f}")
 
-    # --- VYHOD (leave the part, G40 only on LINE — SwanSoft rule) ---
     i_out, j_out = ij(P2, L["c_out"])
-    a(
-        f"{nxt()} G03 {xyz(*L['end_out'])} I{i_out:.3f} J{j_out:.3f}    "
-        f"(LEAD-OUT arc R{r:.0f} off contour)"
-    )
-    a(f"{nxt()} G01 {xyz(*L['away'])}            (clear of part, still G41)")
-    a(f"{nxt()} G40 G01 {xyz(*L['cancel'])}      (cancel G41 on LINE only)")
+    a(f"{nxt()} G03 {xyz(*L['end_out'])} I{i_out:.3f} J{j_out:.3f}")
+    a(f"{nxt()} G01 {xyz(*L['away'])}")
+    a(f"{nxt()} G40 G01 {xyz(*L['cancel'])}")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
-    a(f"{nxt()} G00 {xyz(*L['park'])}            (park)")
+    a(f"{nxt()} G00 {xyz(*L['park'])}")
     a(f"{nxt()} M09")
     a(f"{nxt()} M05")
     a(f"{nxt()} M30")
