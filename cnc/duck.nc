@@ -7,17 +7,18 @@ O0001
 (Z only <=0 — Z+ from HOME = Over travel)
 (RESET alarm, then AUTO / CYCLE START)
 (Tool T1 D8mm  set D1=4.0 RADIUS)
+(Aluminum: S2500  Fxy=80  Fz=40)
 (Depth Z-5.0  path X[-252..-15] Y[-251..-15])
 (Lead-in/out R9.8 outside part at P2)
 N010 G21 G17 G40 G49 G80 G90 G94
 N020 G54
 N030 T1 M06
-N040 S1200 M03
+N040 S2500 M03
 N050 M08
 N060 G00 X-157.200 Y-35.000        (lead-in XY, outside)
 N070 G00 Z0.0                 (Z0 = HOME height, do not go +Z)
-N080 G01 Z-5.0 F80        (plunge)
-N090 G01 G41 D1 X-157.200 Y-75.000 F200  (G41 on LINE)
+N080 G01 Z-5.0 F40        (plunge)
+N090 G01 G41 D1 X-157.200 Y-75.000 F80  (G41 on LINE)
 N100 G03 X-176.814 Y-75.000 I-9.807 J0.000    (LEAD-IN arc R10 onto contour)
 N110 G01 X-176.814 Y-99.517            (P2-P3 head right)
 N120 G03 X-161.242 Y-123.959 I26.969 J0.000    (P3-P4 R55 neck)

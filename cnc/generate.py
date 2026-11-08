@@ -17,9 +17,10 @@ TOOL_RAD = TOOL_DIA / 2.0
 SAFE_Z = 0.0
 RAPID_Z = 0.0
 CUT_Z = -5.0
-FEED_XY = 200.0
-FEED_Z = 80.0
-SPINDLE = 1200
+# Aluminum (Ø8 end mill, light contour pass in SwanSoft)
+FEED_XY = 80.0
+FEED_Z = 40.0
+SPINDLE = 2500
 
 # SwanSoft Fanuc: after REF/HOME the machine sits at the POSITIVE stroke end.
 # Work must be in -X/-Y. Training mills often allow only ~300 mm into -X/-Y
@@ -178,6 +179,7 @@ def write_gcode(segs, pts, path: Path, lead: dict | None = None):
     a("(Z only <=0 — Z+ from HOME = Over travel)")
     a("(RESET alarm, then AUTO / CYCLE START)")
     a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
+    a(f"(Aluminum: S{SPINDLE:.0f}  Fxy={FEED_XY:.0f}  Fz={FEED_Z:.0f})")
     a(f"(Depth Z{CUT_Z:.1f}  path X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}])")
     a(f"(Lead-in/out R{r:.1f} outside part at P2)")
     a(f"{nxt()} G21 G17 G40 G49 G80 G90 G94")
