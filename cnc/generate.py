@@ -22,10 +22,10 @@ FEED_Z = 80.0
 SPINDLE = 1200
 
 # SwanSoft Fanuc: after REF/HOME the machine sits at the POSITIVE stroke end.
-# Moves into +X/+Y from home → "Over travel". Work must be in -X/-Y (or G54<<0).
-# We place the toolpath in the negative quadrant with G54=0 after HOME.
-STOCK_XY = 500.0
-MARGIN = 20.0
+# Work must be in -X/-Y. Training mills often allow only ~300 mm into -X/-Y
+# (Y-413 already caused Over travel) — scale the path to fit TRAVEL.
+TRAVEL = 280.0
+MARGIN = 15.0
 
 
 def ij(start, center):
@@ -40,26 +40,8 @@ def shift_pt(p, dx, dy):
     return (p[0] + dx, p[1] + dy)
 
 
-def compute_work_shift(pts, lead: dict):
-    """Translate drawing coords into the SwanSoft +X/+Y work envelope.
-
-    Fit inside STOCK_XY×STOCK_XY with MARGIN when possible; never go negative.
-    """
-    xs = [p[0] for k, p in pts.items() if k.startswith("P")]
-    ys = [p[1] for k, p in pts.items() if k.startswith("P")]
-    for key in ("rapid_in", "start_in", "end_out", "away", "cancel", "park", "P2"):
-        xs.append(lead[key][0])
-        ys.append(lead[key][1])
-
-    def axis_shift(vals):
-        lo, hi = min(vals), max(vals)
-        span = hi - lo
-        if span <= STOCK_XY - 2 * MARGIN:
-            return MARGIN - lo  # left/bottom margin
-        # Contour almost fills the blank — center it (still non-negative).
-        return (STOCK_XY - span) / 2.0 - lo
-
-    return axis_shift(xs), axis_shift(ys)
+def scale_pt(p, s):
+    return (p[0] * s, p[1] * s)
 
 
 def apply_shift_pts(pts, dx, dy):
@@ -95,6 +77,43 @@ def apply_shift_segs(segs, dx, dy):
                 )
             )
     return out
+
+
+def apply_scale_pts(pts, s):
+    return {k: scale_pt(v, s) for k, v in pts.items()}
+
+
+def apply_scale_segs(segs, s):
+    from geometry import Seg
+
+    out = []
+    for seg in segs:
+        if seg.kind == "line":
+            out.append(
+                Seg("line", scale_pt(seg.p0, s), scale_pt(seg.p1, s), name=seg.name)
+            )
+        else:
+            out.append(
+                Seg(
+                    "arc",
+                    scale_pt(seg.p0, s),
+                    scale_pt(seg.p1, s),
+                    scale_pt(seg.center, s),
+                    seg.r * s,
+                    seg.g,
+                    seg.name,
+                )
+            )
+    return out
+
+
+def path_bounds(pts, lead: dict):
+    xs = [p[0] for k, p in pts.items() if k.startswith("P")]
+    ys = [p[1] for k, p in pts.items() if k.startswith("P")]
+    for key in ("rapid_in", "start_in", "end_out", "away", "cancel", "park", "P2"):
+        xs.append(lead[key][0])
+        ys.append(lead[key][1])
+    return min(xs), max(xs), min(ys), max(ys)
 
 
 def lead_geometry(pts, r_lead: float = 20.0):
@@ -154,12 +173,13 @@ def write_gcode(segs, pts, path: Path, lead: dict | None = None):
     a("O0001")
     a("(DUCK CONTOUR)")
     a("(SwanSoft Fanuc 0i-M)")
-    a("(After HOME leave G54 = 0,0,0 — XY in -X -Y, Z only <=0)")
-    a("(No Z+ moves: Z+ from HOME = Over travel on Z)")
+    a("(After HOME leave G54 = 0,0,0)")
+    a("(XY scaled to fit ~280mm travel in -X -Y from HOME)")
+    a("(Z only <=0 — Z+ from HOME = Over travel)")
     a("(RESET alarm, then AUTO / CYCLE START)")
     a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
     a(f"(Depth Z{CUT_Z:.1f}  path X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}])")
-    a(f"(Lead-in/out R{r:.0f} outside part at P2)")
+    a(f"(Lead-in/out R{r:.1f} outside part at P2)")
     a(f"{nxt()} G21 G17 G40 G49 G80 G90 G94")
     a(f"{nxt()} G54")
     a(f"{nxt()} T1 M06")
@@ -675,15 +695,22 @@ def main():
     plot_contour(segs0, pts0, lead0, ROOT / "contour.png")
     overlay_drawing(segs0, pts0, ROOT / "overlay_on_drawing.png")
 
-    # Machine-space NC for SwanSoft Fanuc:
-    # 1) pack into a 500×500 positive box, 2) map into -X/-Y from HOME.
-    dx, dy = compute_work_shift(pts0, lead0)
-    pts = apply_shift_pts(pts0, dx, dy)
-    segs = apply_shift_segs(segs0, dx, dy)
-    lead = apply_shift_lead(lead0, dx, dy)
-    pts = apply_shift_pts(pts, -STOCK_XY, -STOCK_XY)
-    segs = apply_shift_segs(segs, -STOCK_XY, -STOCK_XY)
-    lead = apply_shift_lead(lead, -STOCK_XY, -STOCK_XY)
+    # Machine-space NC for SwanSoft Fanuc (small travel ~280 mm into -X/-Y):
+    # scale drawing → rebuild lead → shift so path ∈ [-TRAVEL+MARGIN, -MARGIN].
+    xmin0, xmax0, ymin0, ymax0 = path_bounds(pts0, lead0)
+    span0 = max(xmax0 - xmin0, ymax0 - ymin0)
+    usable = TRAVEL - 2 * MARGIN
+    scale = 0.95 * usable / span0
+    r_lead = max(8.0, 20.0 * scale)
+    pts = apply_scale_pts(pts0, scale)
+    segs = apply_scale_segs(segs0, scale)
+    lead = lead_geometry(pts, r_lead=r_lead)
+    xmin, xmax, ymin, ymax = path_bounds(pts, lead)
+    dx = -MARGIN - xmax
+    dy = -MARGIN - ymax
+    pts = apply_shift_pts(pts, dx, dy)
+    segs = apply_shift_segs(segs, dx, dy)
+    lead = apply_shift_lead(lead, dx, dy)
     nc, lead = write_gcode(segs, pts, ROOT / "duck.nc", lead=lead)
     write_preview(segs, pts, lead, ROOT / "duck_preview.nc")
     simulate_gcode(nc, ROOT / "toolpath_from_nc.png")
@@ -692,7 +719,10 @@ def main():
     _write_viewer_nc(ROOT / "viewer.html", lead, segs)
 
     print("wrote", nc)
-    print(f"work shift for SwanSoft: pack dX={dx:.3f} dY={dy:.3f}, then -{STOCK_XY:.0f} (negative from HOME)")
+    print(
+        f"SwanSoft fit: scale={scale:.4f} r_lead={r_lead:.2f} "
+        f"shift=({dx:.2f},{dy:.2f}) travel={TRAVEL:.0f}"
+    )
     print(
         "lead-in",
         fmt(lead["start_in"]),
