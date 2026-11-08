@@ -28,17 +28,42 @@ def xyz(x, y, n=3):
     return f"X{x:.{n}f} Y{y:.{n}f}"
 
 
-def write_gcode(segs, pts, path: Path):
+def lead_geometry(pts, r_lead: float = 20.0):
+    """Tangential circular lead-in / lead-out off the part at P2.
+
+    Contour starts at P2 going down (0,-1). Outside is +X.
+    Lead-in:  G03 90° from the right onto P2 (arrive going down).
+    Lead-out: G03 90° from P2 downward-out, then linear away; G40 on G01 only.
+    """
     P2 = pts["P2"]
-    # Lead-in: above P2, move down onto the vertical edge (same direction as P2→P3).
-    # Lead-out: after R60 returns to P2 the tangent is downward; do NOT reverse up.
-    # Leave to the RIGHT (outside) on a LINEAR move, then cancel G40 on another G01.
-    # SwanSoft: "tool compensation couldn't be canceled by arc segment" if G40 rides a G02/G03.
-    lead = 40.0
-    pin = (P2[0], P2[1] + lead)  # (-25, 240)
-    pout1 = (P2[0] + 40.0, P2[1])  # (-25+40, 200) = (15, 200) outside
-    pout2 = (P2[0] + 40.0, P2[1] + lead)  # (15, 240)
+    r = r_lead
+    c_in = (P2[0] + r, P2[1])          # (-5, 200) for r=20
+    start_in = (c_in[0] + r, c_in[1])   # (15, 200) — east of center
+    rapid_in = (start_in[0], start_in[1] + 40.0)  # (15, 240)
+
+    # Lead-out center same side; from P2 CCW 90° → below center
+    c_out = c_in
+    end_out = (c_out[0], c_out[1] - r)  # (-5, 180)
+    away = (P2[0] + 55.0, end_out[1])   # (30, 180) clear of part
+    cancel = (away[0], away[1] + 40.0)  # (30, 220)
     park = (50.0, 260.0)
+    return {
+        "P2": P2,
+        "r": r,
+        "c_in": c_in,
+        "start_in": start_in,
+        "rapid_in": rapid_in,
+        "c_out": c_out,
+        "end_out": end_out,
+        "away": away,
+        "cancel": cancel,
+        "park": park,
+    }
+
+
+def write_gcode(segs, pts, path: Path):
+    L = lead_geometry(pts)
+    P2, r = L["P2"], L["r"]
 
     xs = [p[0] for k, p in pts.items() if k.startswith("P")]
     ys = [p[1] for k, p in pts.items() if k.startswith("P")]
@@ -59,16 +84,24 @@ def write_gcode(segs, pts, path: Path):
     a("(XY: X0 vertical axis, Y0 lower 150 datum)")
     a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
     a(f"(Depth Z{CUT_Z:.1f}  stock X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}] Z10)")
+    a(f"(Lead-in/out R{r:.0f} outside part at P2)")
     a(f"{nxt()} G21 G17 G40 G49 G80 G90 G94")
     a(f"{nxt()} G54")
     a(f"{nxt()} T1 M06")
     a(f"{nxt()} S{SPINDLE:.0f} M03")
     a(f"{nxt()} M08")
-    a(f"{nxt()} G00 {xyz(*pin)}")
+
+    # --- ZAHOD (approach from outside the part) ---
+    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}        (nad zahodom, snaruzhi)")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
     a(f"{nxt()} G00 Z{RAPID_Z:.1f}")
-    a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge)")
-    a(f"{nxt()} G01 G41 D1 {xyz(*P2)} F{FEED_XY:.0f}    (lead-in, start G41 on LINE)")
+    a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge outside part)")
+    a(f"{nxt()} G01 G41 D1 {xyz(*L['start_in'])} F{FEED_XY:.0f}  (G41 on LINE)")
+    i_in, j_in = ij(L["start_in"], L["c_in"])
+    a(
+        f"{nxt()} G03 {xyz(*P2)} I{i_in:.3f} J{j_in:.3f}    "
+        f"(ZAHOD duga R{r:.0f} na kontur)"
+    )
 
     comments = {
         "head_right": "P2-P3 head right",
@@ -92,17 +125,22 @@ def write_gcode(segs, pts, path: Path):
             i, j = ij(s.p0, s.center)
             a(f"{nxt()} {s.g} {xyz(*s.p1)} I{i:.3f} J{j:.3f}    ({note})")
 
-    # Cancel cutter comp only on linear blocks (Fanuc / SwanSoft rule).
-    a(f"{nxt()} G01 {xyz(*pout1)}            (lead-out linear, still G41)")
-    a(f"{nxt()} G40 G01 {xyz(*pout2)}        (cancel G41 on LINE, never on arc)")
+    # --- VYHOD (leave the part, G40 only on LINE — SwanSoft rule) ---
+    i_out, j_out = ij(P2, L["c_out"])
+    a(
+        f"{nxt()} G03 {xyz(*L['end_out'])} I{i_out:.3f} J{j_out:.3f}    "
+        f"(VYHOD duga R{r:.0f} s kontura)"
+    )
+    a(f"{nxt()} G01 {xyz(*L['away'])}            (otvod ot detali, eshchyo G41)")
+    a(f"{nxt()} G40 G01 {xyz(*L['cancel'])}      (snyatie G41 TOLKO na G01)")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
-    a(f"{nxt()} G00 {xyz(*park)}            (park)")
+    a(f"{nxt()} G00 {xyz(*L['park'])}            (park)")
     a(f"{nxt()} M09")
     a(f"{nxt()} M05")
     a(f"{nxt()} M30")
     a("%")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path, pin
+    return path, L
 
 
 def _arc_angles(center, p0, p1, g: str):
@@ -114,46 +152,50 @@ def _arc_angles(center, p0, p1, g: str):
     return a0, a1
 
 
-def write_dxf(segs, pts, path: Path):
+def write_dxf(segs, pts, lead: dict, path: Path):
     """AutoCAD R12 DXF — open in KOMPAS-3D and Save As .cdw."""
     ents = []
 
     def pair(code, value):
         ents.append(f"{code}\n{value}")
 
-    for s in segs:
-        if s.kind == "line":
-            pair(0, "LINE")
-            pair(8, "KONTUR")
-            pair(10, f"{s.p0[0]:.6f}")
-            pair(20, f"{s.p0[1]:.6f}")
-            pair(30, "0.0")
-            pair(11, f"{s.p1[0]:.6f}")
-            pair(21, f"{s.p1[1]:.6f}")
-            pair(31, "0.0")
-        else:
-            a0, a1 = _arc_angles(s.center, s.p0, s.p1, s.g)
-            pair(0, "ARC")
-            pair(8, "KONTUR")
-            pair(10, f"{s.center[0]:.6f}")
-            pair(20, f"{s.center[1]:.6f}")
-            pair(30, "0.0")
-            pair(40, f"{s.r:.6f}")
-            pair(50, f"{a0:.6f}")
-            pair(51, f"{a1:.6f}")
-
-    # Axes for reference (construction)
-    for x0, y0, x1, y1 in [(-200, 0, 320, 0), (0, -180, 0, 230)]:
+    def add_line(layer, p0, p1):
         pair(0, "LINE")
-        pair(8, "OSI")
-        pair(10, f"{x0:.1f}")
-        pair(20, f"{y0:.1f}")
+        pair(8, layer)
+        pair(10, f"{p0[0]:.6f}")
+        pair(20, f"{p0[1]:.6f}")
         pair(30, "0.0")
-        pair(11, f"{x1:.1f}")
-        pair(21, f"{y1:.1f}")
+        pair(11, f"{p1[0]:.6f}")
+        pair(21, f"{p1[1]:.6f}")
         pair(31, "0.0")
 
-    # Points as small circles (optional markers)
+    def add_arc(layer, center, p0, p1, g, r):
+        a0, a1 = _arc_angles(center, p0, p1, g)
+        pair(0, "ARC")
+        pair(8, layer)
+        pair(10, f"{center[0]:.6f}")
+        pair(20, f"{center[1]:.6f}")
+        pair(30, "0.0")
+        pair(40, f"{r:.6f}")
+        pair(50, f"{a0:.6f}")
+        pair(51, f"{a1:.6f}")
+
+    for s in segs:
+        if s.kind == "line":
+            add_line("KONTUR", s.p0, s.p1)
+        else:
+            add_arc("KONTUR", s.center, s.p0, s.p1, s.g, s.r)
+
+    # Lead-in / lead-out off the part
+    add_line("ZAHOD", lead["rapid_in"], lead["start_in"])
+    add_arc("ZAHOD", lead["c_in"], lead["start_in"], lead["P2"], "G03", lead["r"])
+    add_arc("VYHOD", lead["c_out"], lead["P2"], lead["end_out"], "G03", lead["r"])
+    add_line("VYHOD", lead["end_out"], lead["away"])
+    add_line("VYHOD", lead["away"], lead["cancel"])
+
+    for x0, y0, x1, y1 in [(-200, 0, 320, 0), (0, -180, 0, 230)]:
+        add_line("OSI", (x0, y0), (x1, y1))
+
     for name in ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]:
         p = pts[name]
         pair(0, "POINT")
@@ -186,7 +228,7 @@ TABLE
 2
 LAYER
 70
-3
+5
 0
 LAYER
 2
@@ -195,6 +237,26 @@ KONTUR
 0
 62
 7
+6
+CONTINUOUS
+0
+LAYER
+2
+ZAHOD
+70
+0
+62
+3
+6
+CONTINUOUS
+0
+LAYER
+2
+VYHOD
+70
+0
+62
+1
 6
 CONTINUOUS
 0
@@ -235,8 +297,8 @@ EOF
     return path
 
 
-def write_preview(segs, pts, pin, path: Path):
-    """Contour-only program without cutter comp — for NC viewers."""
+def write_preview(segs, pts, lead: dict, path: Path):
+    """Contour + lead-in/out without cutter comp — for NC viewers."""
     lines = ["%", "O0002", "(DUCK CONTOUR PREVIEW, no G41)"]
     n = [0]
 
@@ -246,16 +308,22 @@ def write_preview(segs, pts, pin, path: Path):
 
     a = lines.append
     a(f"{nxt()} G21 G17 G40 G90")
-    a(f"{nxt()} G00 {xyz(*pin)}")
+    a(f"{nxt()} G00 {xyz(*lead['rapid_in'])}")
     a(f"{nxt()} G00 Z{RAPID_Z:.1f}")
     a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}")
-    a(f"{nxt()} G01 {xyz(*pts['P2'])} F{FEED_XY:.0f}")
+    a(f"{nxt()} G01 {xyz(*lead['start_in'])} F{FEED_XY:.0f}")
+    i_in, j_in = ij(lead["start_in"], lead["c_in"])
+    a(f"{nxt()} G03 {xyz(*lead['P2'])} I{i_in:.3f} J{j_in:.3f}")
     for s in segs:
         if s.kind == "line":
             a(f"{nxt()} G01 {xyz(*s.p1)}")
         else:
             i, j = ij(s.p0, s.center)
             a(f"{nxt()} {s.g} {xyz(*s.p1)} I{i:.3f} J{j:.3f}")
+    i_out, j_out = ij(lead["P2"], lead["c_out"])
+    a(f"{nxt()} G03 {xyz(*lead['end_out'])} I{i_out:.3f} J{j_out:.3f}")
+    a(f"{nxt()} G01 {xyz(*lead['away'])}")
+    a(f"{nxt()} G01 {xyz(*lead['cancel'])}")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
     a(f"{nxt()} M30")
     a("%")
@@ -321,12 +389,11 @@ def write_table(pts, segs, path: Path):
     path.write_text("\n".join(rows), encoding="utf-8")
 
 
-def plot_contour(segs, pts, pin, path: Path):
+def plot_contour(segs, pts, lead: dict, path: Path):
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Arc, FancyArrowPatch
     import numpy as np
 
     fig, ax = plt.subplots(figsize=(11, 8), dpi=140)
@@ -347,22 +414,37 @@ def plot_contour(segs, pts, pin, path: Path):
             angs = a0 + np.linspace(0, da, n)
         return c[0] + r * np.cos(angs), c[1] + r * np.sin(angs)
 
-    xs, ys = [], []
     for s in segs:
         if s.kind == "line":
             ax.plot([s.p0[0], s.p1[0]], [s.p0[1], s.p1[1]], color="#1a1a1a", lw=2.2)
-            xs += [s.p0[0], s.p1[0]]
-            ys += [s.p0[1], s.p1[1]]
         else:
             x, y = arc_xy(s.center, s.p0, s.p1, s.r, s.g)
             ax.plot(x, y, color="#1a1a1a", lw=2.2)
-            xs += list(x)
-            ys += list(y)
 
-    # lead-in / lead-out
-    ax.plot([pin[0], pts["P2"][0]], [pin[1], pts["P2"][1]], color="#2a9d4a", lw=1.8, ls="--", label="заход / выход")
-    ax.scatter(*pin, c="#2a9d4a", s=28, zorder=5)
-    ax.annotate("заход", pin, textcoords="offset points", xytext=(8, 6), color="#2a9d4a", fontsize=8)
+    # Lead-in (green)
+    ax.plot(
+        [lead["rapid_in"][0], lead["start_in"][0]],
+        [lead["rapid_in"][1], lead["start_in"][1]],
+        color="#2a9d4a",
+        lw=1.8,
+        ls="--",
+        label="заход",
+    )
+    x, y = arc_xy(lead["c_in"], lead["start_in"], lead["P2"], lead["r"], "G03")
+    ax.plot(x, y, color="#2a9d4a", lw=2.0, ls="--")
+    ax.annotate("заход", lead["start_in"], textcoords="offset points", xytext=(8, 8), color="#2a9d4a", fontsize=8)
+
+    # Lead-out (orange)
+    x, y = arc_xy(lead["c_out"], lead["P2"], lead["end_out"], lead["r"], "G03")
+    ax.plot(x, y, color="#e67e22", lw=2.0, ls="--", label="выход")
+    ax.plot(
+        [lead["end_out"][0], lead["away"][0], lead["cancel"][0]],
+        [lead["end_out"][1], lead["away"][1], lead["cancel"][1]],
+        color="#e67e22",
+        lw=1.8,
+        ls="--",
+    )
+    ax.annotate("выход", lead["away"], textcoords="offset points", xytext=(6, -12), color="#e67e22", fontsize=8)
 
     for name in ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]:
         p = pts[name]
@@ -373,7 +455,7 @@ def plot_contour(segs, pts, pin, path: Path):
     ax.axvline(0, color="#4c7bd9", lw=0.8, ls=":", alpha=0.8)
     ax.set_xlabel("X, мм")
     ax.set_ylabel("Y, мм")
-    ax.set_title("Контур фрезерования (обход по часовой, G41 снаружи)")
+    ax.set_title("Контур: заход / обход по часовой / выход (G41 снаружи)")
     ax.grid(True, alpha=0.25)
     ax.legend(loc="lower right")
     fig.tight_layout()
@@ -512,15 +594,25 @@ def simulate_gcode(nc_path: Path, plot_path: Path):
 
 def main():
     segs, pts = build()
-    nc, pin = write_gcode(segs, pts, ROOT / "duck.nc")
-    write_preview(segs, pts, pin, ROOT / "duck_preview.nc")
-    dxf = write_dxf(segs, pts, ROOT / "duck.dxf")
+    nc, lead = write_gcode(segs, pts, ROOT / "duck.nc")
+    write_preview(segs, pts, lead, ROOT / "duck_preview.nc")
+    dxf = write_dxf(segs, pts, lead, ROOT / "duck.dxf")
     write_table(pts, segs, ROOT / "coordinates.md")
-    plot_contour(segs, pts, pin, ROOT / "contour.png")
+    plot_contour(segs, pts, lead, ROOT / "contour.png")
     overlay_drawing(segs, pts, ROOT / "overlay_on_drawing.png")
     simulate_gcode(nc, ROOT / "toolpath_from_nc.png")
     print("wrote", nc)
     print("wrote", dxf, "(open in KOMPAS → Save As .cdw)")
+    print(
+        "lead-in",
+        fmt(lead["start_in"]),
+        "→",
+        fmt(lead["P2"]),
+        " lead-out",
+        fmt(lead["P2"]),
+        "→",
+        fmt(lead["end_out"]),
+    )
     for k in ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]:
         print(f"  {k} {fmt(pts[k])}")
 

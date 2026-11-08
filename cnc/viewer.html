@@ -23,8 +23,9 @@
 <canvas id="c"></canvas>
 <script>
 const NC = `
-G00 X-25.000 Y240.000
-G01 X-25.000 Y200.000
+G00 X15.000 Y240.000
+G01 X15.000 Y200.000
+G03 X-25.000 Y200.000 I-20.000 J0.000
 G01 X-25.000 Y150.000
 G03 X6.756 Y100.153 I55.000 J0.000
 G01 X125.536 Y44.765
@@ -36,7 +37,9 @@ G01 X-36.557 Y-159.760
 G02 X-179.354 Y10.419 I0.000 J145.000
 G01 X-144.088 Y210.419
 G02 X-25.000 Y200.000 I59.088 J-10.419
-G01 X-25.000 Y240.000
+G03 X-5.000 Y180.000 I20.000 J0.000
+G01 X30.000 Y180.000
+G01 X30.000 Y220.000
 G00 X50.000 Y260.000
 `;
 function parse(nc) {
@@ -44,10 +47,10 @@ function parse(nc) {
   const push=(nx,ny,cut)=>{ pts.push({x:nx,y:ny,cut}); x=nx; y=ny; };
   for (const raw of nc.trim().split("\n")) {
     const line = raw.trim(); if (!line) continue;
-    const gx = /X(-?[\\d.]+)/.exec(line);
-    const gy = /Y(-?[\\d.]+)/.exec(line);
-    const gi = /I(-?[\\d.]+)/.exec(line);
-    const gj = /J(-?[\\d.]+)/.exec(line);
+    const gx = /X(-?[\d.]+)/.exec(line);
+    const gy = /Y(-?[\d.]+)/.exec(line);
+    const gi = /I(-?[\d.]+)/.exec(line);
+    const gj = /J(-?[\d.]+)/.exec(line);
     const nx = gx ? +gx[1] : x, ny = gy ? +gy[1] : y;
     const cut = /G0[123]/.test(line);
     if (/G0[23]/.test(line) && gi && gj) {
