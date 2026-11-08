@@ -105,6 +105,136 @@ def write_gcode(segs, pts, path: Path):
     return path, pin
 
 
+def _arc_angles(center, p0, p1, g: str):
+    """DXF ARC is always CCW from start_angle to end_angle (degrees)."""
+    a0 = math.degrees(math.atan2(p0[1] - center[1], p0[0] - center[0]))
+    a1 = math.degrees(math.atan2(p1[1] - center[1], p1[0] - center[0]))
+    if g == "G02":  # CW path A→B = same curve as CCW B→A
+        return a1, a0
+    return a0, a1
+
+
+def write_dxf(segs, pts, path: Path):
+    """AutoCAD R12 DXF — open in KOMPAS-3D and Save As .cdw."""
+    ents = []
+
+    def pair(code, value):
+        ents.append(f"{code}\n{value}")
+
+    for s in segs:
+        if s.kind == "line":
+            pair(0, "LINE")
+            pair(8, "KONTUR")
+            pair(10, f"{s.p0[0]:.6f}")
+            pair(20, f"{s.p0[1]:.6f}")
+            pair(30, "0.0")
+            pair(11, f"{s.p1[0]:.6f}")
+            pair(21, f"{s.p1[1]:.6f}")
+            pair(31, "0.0")
+        else:
+            a0, a1 = _arc_angles(s.center, s.p0, s.p1, s.g)
+            pair(0, "ARC")
+            pair(8, "KONTUR")
+            pair(10, f"{s.center[0]:.6f}")
+            pair(20, f"{s.center[1]:.6f}")
+            pair(30, "0.0")
+            pair(40, f"{s.r:.6f}")
+            pair(50, f"{a0:.6f}")
+            pair(51, f"{a1:.6f}")
+
+    # Axes for reference (construction)
+    for x0, y0, x1, y1 in [(-200, 0, 320, 0), (0, -180, 0, 230)]:
+        pair(0, "LINE")
+        pair(8, "OSI")
+        pair(10, f"{x0:.1f}")
+        pair(20, f"{y0:.1f}")
+        pair(30, "0.0")
+        pair(11, f"{x1:.1f}")
+        pair(21, f"{y1:.1f}")
+        pair(31, "0.0")
+
+    # Points as small circles (optional markers)
+    for name in ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]:
+        p = pts[name]
+        pair(0, "POINT")
+        pair(8, "TOCHKI")
+        pair(10, f"{p[0]:.6f}")
+        pair(20, f"{p[1]:.6f}")
+        pair(30, "0.0")
+
+    body = "\n".join(ents)
+    dxf = f"""0
+SECTION
+2
+HEADER
+9
+$INSUNITS
+70
+4
+9
+$MEASUREMENT
+70
+1
+0
+ENDSEC
+0
+SECTION
+2
+TABLES
+0
+TABLE
+2
+LAYER
+70
+3
+0
+LAYER
+2
+KONTUR
+70
+0
+62
+7
+6
+CONTINUOUS
+0
+LAYER
+2
+OSI
+70
+0
+62
+8
+6
+DASHDOT
+0
+LAYER
+2
+TOCHKI
+70
+0
+62
+1
+6
+CONTINUOUS
+0
+ENDTAB
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+{body}
+0
+ENDSEC
+0
+EOF
+"""
+    path.write_text(dxf, encoding="utf-8")
+    return path
+
+
 def write_preview(segs, pts, pin, path: Path):
     """Contour-only program without cutter comp — for NC viewers."""
     lines = ["%", "O0002", "(DUCK CONTOUR PREVIEW, no G41)"]
@@ -384,11 +514,13 @@ def main():
     segs, pts = build()
     nc, pin = write_gcode(segs, pts, ROOT / "duck.nc")
     write_preview(segs, pts, pin, ROOT / "duck_preview.nc")
+    dxf = write_dxf(segs, pts, ROOT / "duck.dxf")
     write_table(pts, segs, ROOT / "coordinates.md")
     plot_contour(segs, pts, pin, ROOT / "contour.png")
     overlay_drawing(segs, pts, ROOT / "overlay_on_drawing.png")
     simulate_gcode(nc, ROOT / "toolpath_from_nc.png")
     print("wrote", nc)
+    print("wrote", dxf, "(open in KOMPAS → Save As .cdw)")
     for k in ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]:
         print(f"  {k} {fmt(pts[k])}")
 

@@ -8,6 +8,7 @@
 |------|------------|
 | [`cnc/duck.nc`](cnc/duck.nc) | Основная УП: заход, G41, контур, выход |
 | [`cnc/duck_preview.nc`](cnc/duck_preview.nc) | Тот же контур без коррекции — для просмотра в NC Viewer |
+| [`cnc/duck.dxf`](cnc/duck.dxf) | Контур для КОМПАС-3D (Файл → Открыть → Сохранить как `.cdw`) |
 | [`cnc/coordinates.md`](cnc/coordinates.md) | Опорные точки и проверки радиусов |
 | [`cnc/contour.png`](cnc/contour.png) | Чертёж контура с точками и заходом |
 | [`cnc/viewer.html`](cnc/viewer.html) | Просмотр траектории в браузере |
