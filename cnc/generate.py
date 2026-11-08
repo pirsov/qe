@@ -19,6 +19,11 @@ FEED_XY = 200.0
 FEED_Z = 80.0
 SPINDLE = 1200
 
+# SwanSoft machine travel is typically from the home corner into +X/+Y.
+# Drawing coords have negative X/Y → Over travel. Shift into a 500×500 blank.
+STOCK_XY = 500.0
+MARGIN = 20.0
+
 
 def ij(start, center):
     return center[0] - start[0], center[1] - start[1]
@@ -26,6 +31,67 @@ def ij(start, center):
 
 def xyz(x, y, n=3):
     return f"X{x:.{n}f} Y{y:.{n}f}"
+
+
+def shift_pt(p, dx, dy):
+    return (p[0] + dx, p[1] + dy)
+
+
+def compute_work_shift(pts, lead: dict):
+    """Translate drawing coords into the SwanSoft +X/+Y work envelope.
+
+    Fit inside STOCK_XY×STOCK_XY with MARGIN when possible; never go negative.
+    """
+    xs = [p[0] for k, p in pts.items() if k.startswith("P")]
+    ys = [p[1] for k, p in pts.items() if k.startswith("P")]
+    for key in ("rapid_in", "start_in", "end_out", "away", "cancel", "park", "P2"):
+        xs.append(lead[key][0])
+        ys.append(lead[key][1])
+
+    def axis_shift(vals):
+        lo, hi = min(vals), max(vals)
+        span = hi - lo
+        if span <= STOCK_XY - 2 * MARGIN:
+            return MARGIN - lo  # left/bottom margin
+        # Contour almost fills the blank — center it (still non-negative).
+        return (STOCK_XY - span) / 2.0 - lo
+
+    return axis_shift(xs), axis_shift(ys)
+
+
+def apply_shift_pts(pts, dx, dy):
+    return {k: shift_pt(v, dx, dy) for k, v in pts.items()}
+
+
+def apply_shift_lead(lead, dx, dy):
+    out = dict(lead)
+    for key in ("P2", "c_in", "start_in", "rapid_in", "c_out", "end_out", "away", "cancel", "park"):
+        out[key] = shift_pt(lead[key], dx, dy)
+    return out
+
+
+def apply_shift_segs(segs, dx, dy):
+    from geometry import Seg
+
+    out = []
+    for s in segs:
+        if s.kind == "line":
+            out.append(
+                Seg("line", shift_pt(s.p0, dx, dy), shift_pt(s.p1, dx, dy), name=s.name)
+            )
+        else:
+            out.append(
+                Seg(
+                    "arc",
+                    shift_pt(s.p0, dx, dy),
+                    shift_pt(s.p1, dx, dy),
+                    shift_pt(s.center, dx, dy),
+                    s.r,
+                    s.g,
+                    s.name,
+                )
+            )
+    return out
 
 
 def lead_geometry(pts, r_lead: float = 20.0):
@@ -44,9 +110,9 @@ def lead_geometry(pts, r_lead: float = 20.0):
     # Lead-out center same side; from P2 CCW 90° → below center
     c_out = c_in
     end_out = (c_out[0], c_out[1] - r)  # (-5, 180)
-    away = (P2[0] + 55.0, end_out[1])   # (30, 180) clear of part
-    cancel = (away[0], away[1] + 40.0)  # (30, 220)
-    park = (50.0, 260.0)
+    away = (P2[0] + 55.0, end_out[1])   # clear of part
+    cancel = (away[0], away[1] + 40.0)
+    park = (P2[0] + 75.0, P2[1] + 60.0)  # relative to P2 (survives work shift)
     return {
         "P2": P2,
         "r": r,
@@ -61,14 +127,17 @@ def lead_geometry(pts, r_lead: float = 20.0):
     }
 
 
-def write_gcode(segs, pts, path: Path):
-    L = lead_geometry(pts)
+def write_gcode(segs, pts, path: Path, lead: dict | None = None):
+    L = lead if lead is not None else lead_geometry(pts)
     P2, r = L["P2"], L["r"]
 
     xs = [p[0] for k, p in pts.items() if k.startswith("P")]
     ys = [p[1] for k, p in pts.items() if k.startswith("P")]
-    xmin, xmax = min(xs) - 20, max(xs) + 20
-    ymin, ymax = min(ys) - 20, max(ys) + 20
+    for key in ("rapid_in", "start_in", "end_out", "away", "cancel", "park"):
+        xs.append(L[key][0])
+        ys.append(L[key][1])
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
 
     n = [0]
 
@@ -81,9 +150,10 @@ def write_gcode(segs, pts, path: Path):
     a("%")
     a("O0001")
     a("(DUCK CONTOUR)")
-    a("(XY: X0 vertical axis, Y0 lower 150 datum)")
+    a("(SwanSoft: G54 at lower-left of 500x500 blank, after HOME)")
+    a("(All XY shifted into +X +Y to avoid Over travel)")
     a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
-    a(f"(Depth Z{CUT_Z:.1f}  stock X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}] Z10)")
+    a(f"(Depth Z{CUT_Z:.1f}  path X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}])")
     a(f"(Lead-in/out R{r:.0f} outside part at P2)")
     a(f"{nxt()} G21 G17 G40 G49 G80 G90 G94")
     a(f"{nxt()} G54")
@@ -92,7 +162,7 @@ def write_gcode(segs, pts, path: Path):
     a(f"{nxt()} M08")
 
     # --- ZAHOD (approach from outside the part) ---
-    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}        (nad zahodom, snaruzhi)")
+    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}        (above lead-in, outside)")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
     a(f"{nxt()} G00 Z{RAPID_Z:.1f}")
     a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge outside part)")
@@ -100,7 +170,7 @@ def write_gcode(segs, pts, path: Path):
     i_in, j_in = ij(L["start_in"], L["c_in"])
     a(
         f"{nxt()} G03 {xyz(*P2)} I{i_in:.3f} J{j_in:.3f}    "
-        f"(ZAHOD duga R{r:.0f} na kontur)"
+        f"(LEAD-IN arc R{r:.0f} onto contour)"
     )
 
     comments = {
@@ -129,10 +199,10 @@ def write_gcode(segs, pts, path: Path):
     i_out, j_out = ij(P2, L["c_out"])
     a(
         f"{nxt()} G03 {xyz(*L['end_out'])} I{i_out:.3f} J{j_out:.3f}    "
-        f"(VYHOD duga R{r:.0f} s kontura)"
+        f"(LEAD-OUT arc R{r:.0f} off contour)"
     )
-    a(f"{nxt()} G01 {xyz(*L['away'])}            (otvod ot detali, eshchyo G41)")
-    a(f"{nxt()} G40 G01 {xyz(*L['cancel'])}      (snyatie G41 TOLKO na G01)")
+    a(f"{nxt()} G01 {xyz(*L['away'])}            (clear of part, still G41)")
+    a(f"{nxt()} G40 G01 {xyz(*L['cancel'])}      (cancel G41 on LINE only)")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
     a(f"{nxt()} G00 {xyz(*L['park'])}            (park)")
     a(f"{nxt()} M09")
@@ -593,16 +663,28 @@ def simulate_gcode(nc_path: Path, plot_path: Path):
 
 
 def main():
-    segs, pts = build()
-    nc, lead = write_gcode(segs, pts, ROOT / "duck.nc")
+    segs0, pts0 = build()
+    lead0 = lead_geometry(pts0)
+    # Drawing-space artifacts (match the paper drawing / KOMPAS)
+    write_dxf(segs0, pts0, lead0, ROOT / "duck.dxf")
+    write_table(pts0, segs0, ROOT / "coordinates.md")
+    plot_contour(segs0, pts0, lead0, ROOT / "contour.png")
+    overlay_drawing(segs0, pts0, ROOT / "overlay_on_drawing.png")
+
+    # Machine-space NC for SwanSoft (no negative travel → no Over travel)
+    dx, dy = compute_work_shift(pts0, lead0)
+    pts = apply_shift_pts(pts0, dx, dy)
+    segs = apply_shift_segs(segs0, dx, dy)
+    lead = apply_shift_lead(lead0, dx, dy)
+    nc, lead = write_gcode(segs, pts, ROOT / "duck.nc", lead=lead)
     write_preview(segs, pts, lead, ROOT / "duck_preview.nc")
-    dxf = write_dxf(segs, pts, lead, ROOT / "duck.dxf")
-    write_table(pts, segs, ROOT / "coordinates.md")
-    plot_contour(segs, pts, lead, ROOT / "contour.png")
-    overlay_drawing(segs, pts, ROOT / "overlay_on_drawing.png")
     simulate_gcode(nc, ROOT / "toolpath_from_nc.png")
+
+    # Sync browser viewer with shifted NC moves (no G41 words needed)
+    _write_viewer_nc(ROOT / "viewer.html", lead, segs)
+
     print("wrote", nc)
-    print("wrote", dxf, "(open in KOMPAS → Save As .cdw)")
+    print(f"work shift for SwanSoft: dX={dx:.3f} dY={dy:.3f}")
     print(
         "lead-in",
         fmt(lead["start_in"]),
@@ -613,8 +695,37 @@ def main():
         "→",
         fmt(lead["end_out"]),
     )
+    xs = [p[0] for k, p in pts.items() if k.startswith("P")]
+    ys = [p[1] for k, p in pts.items() if k.startswith("P")]
+    print(f"NC bbox X[{min(xs):.1f}..{max(xs):.1f}] Y[{min(ys):.1f}..{max(ys):.1f}]")
     for k in ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]:
         print(f"  {k} {fmt(pts[k])}")
+
+
+def _write_viewer_nc(path: Path, lead: dict, segs):
+    """Refresh the hardcoded path inside viewer.html."""
+    text = path.read_text(encoding="utf-8")
+    start = text.index("const NC = `") + len("const NC = `")
+    end = text.index("`;", start)
+    lines = [
+        f"G00 {xyz(*lead['rapid_in'])}",
+        f"G01 {xyz(*lead['start_in'])}",
+        f"G03 {xyz(*lead['P2'])} I{ij(lead['start_in'], lead['c_in'])[0]:.3f} J{ij(lead['start_in'], lead['c_in'])[1]:.3f}",
+    ]
+    for s in segs:
+        if s.kind == "line":
+            lines.append(f"G01 {xyz(*s.p1)}")
+        else:
+            i, j = ij(s.p0, s.center)
+            lines.append(f"{s.g} {xyz(*s.p1)} I{i:.3f} J{j:.3f}")
+    i, j = ij(lead["P2"], lead["c_out"])
+    lines += [
+        f"G03 {xyz(*lead['end_out'])} I{i:.3f} J{j:.3f}",
+        f"G01 {xyz(*lead['away'])}",
+        f"G01 {xyz(*lead['cancel'])}",
+        f"G00 {xyz(*lead['park'])}",
+    ]
+    path.write_text(text[:start] + "\n" + "\n".join(lines) + "\n" + text[end:], encoding="utf-8")
 
 
 if __name__ == "__main__":
