@@ -19,8 +19,9 @@ FEED_XY = 200.0
 FEED_Z = 80.0
 SPINDLE = 1200
 
-# SwanSoft machine travel is typically from the home corner into +X/+Y.
-# Drawing coords have negative X/Y → Over travel. Shift into a 500×500 blank.
+# SwanSoft Fanuc: after REF/HOME the machine sits at the POSITIVE stroke end.
+# Moves into +X/+Y from home → "Over travel". Work must be in -X/-Y (or G54<<0).
+# We place the toolpath in the negative quadrant with G54=0 after HOME.
 STOCK_XY = 500.0
 MARGIN = 20.0
 
@@ -150,8 +151,9 @@ def write_gcode(segs, pts, path: Path, lead: dict | None = None):
     a("%")
     a("O0001")
     a("(DUCK CONTOUR)")
-    a("(SwanSoft: G54 at lower-left of 500x500 blank, after HOME)")
-    a("(All XY shifted into +X +Y to avoid Over travel)")
+    a("(SwanSoft Fanuc 0i-M)")
+    a("(After HOME leave G54 = 0,0,0 — path is in -X -Y from home)")
+    a("(RESET alarm, then AUTO / CYCLE START)")
     a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
     a(f"(Depth Z{CUT_Z:.1f}  path X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}])")
     a(f"(Lead-in/out R{r:.0f} outside part at P2)")
@@ -671,11 +673,15 @@ def main():
     plot_contour(segs0, pts0, lead0, ROOT / "contour.png")
     overlay_drawing(segs0, pts0, ROOT / "overlay_on_drawing.png")
 
-    # Machine-space NC for SwanSoft (no negative travel → no Over travel)
+    # Machine-space NC for SwanSoft Fanuc:
+    # 1) pack into a 500×500 positive box, 2) map into -X/-Y from HOME.
     dx, dy = compute_work_shift(pts0, lead0)
     pts = apply_shift_pts(pts0, dx, dy)
     segs = apply_shift_segs(segs0, dx, dy)
     lead = apply_shift_lead(lead0, dx, dy)
+    pts = apply_shift_pts(pts, -STOCK_XY, -STOCK_XY)
+    segs = apply_shift_segs(segs, -STOCK_XY, -STOCK_XY)
+    lead = apply_shift_lead(lead, -STOCK_XY, -STOCK_XY)
     nc, lead = write_gcode(segs, pts, ROOT / "duck.nc", lead=lead)
     write_preview(segs, pts, lead, ROOT / "duck_preview.nc")
     simulate_gcode(nc, ROOT / "toolpath_from_nc.png")
@@ -684,7 +690,7 @@ def main():
     _write_viewer_nc(ROOT / "viewer.html", lead, segs)
 
     print("wrote", nc)
-    print(f"work shift for SwanSoft: dX={dx:.3f} dY={dy:.3f}")
+    print(f"work shift for SwanSoft: pack dX={dx:.3f} dY={dy:.3f}, then -{STOCK_XY:.0f} (negative from HOME)")
     print(
         "lead-in",
         fmt(lead["start_in"]),
