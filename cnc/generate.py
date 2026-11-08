@@ -12,8 +12,10 @@ REPO = ROOT.parent
 
 TOOL_DIA = 8.0  # mm
 TOOL_RAD = TOOL_DIA / 2.0
-SAFE_Z = 20.0
-RAPID_Z = 5.0
+# After HOME, Fanuc Z0 is at the top stroke. G00 Z+… → Over travel on Z.
+# With G54 Z=0 left at HOME use only Z≤0. (If you set G54 Z on blank top, Z+20 is OK.)
+SAFE_Z = 0.0
+RAPID_Z = 0.0
 CUT_Z = -5.0
 FEED_XY = 200.0
 FEED_Z = 80.0
@@ -152,7 +154,8 @@ def write_gcode(segs, pts, path: Path, lead: dict | None = None):
     a("O0001")
     a("(DUCK CONTOUR)")
     a("(SwanSoft Fanuc 0i-M)")
-    a("(After HOME leave G54 = 0,0,0 — path is in -X -Y from home)")
+    a("(After HOME leave G54 = 0,0,0 — XY in -X -Y, Z only <=0)")
+    a("(No Z+ moves: Z+ from HOME = Over travel on Z)")
     a("(RESET alarm, then AUTO / CYCLE START)")
     a(f"(Tool T1 D{TOOL_DIA:.0f}mm  set D1={TOOL_RAD:.1f} RADIUS)")
     a(f"(Depth Z{CUT_Z:.1f}  path X[{xmin:.0f}..{xmax:.0f}] Y[{ymin:.0f}..{ymax:.0f}])")
@@ -164,10 +167,9 @@ def write_gcode(segs, pts, path: Path, lead: dict | None = None):
     a(f"{nxt()} M08")
 
     # --- ZAHOD (approach from outside the part) ---
-    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}        (above lead-in, outside)")
-    a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
-    a(f"{nxt()} G00 Z{RAPID_Z:.1f}")
-    a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge outside part)")
+    a(f"{nxt()} G00 {xyz(*L['rapid_in'])}        (lead-in XY, outside)")
+    a(f"{nxt()} G00 Z{SAFE_Z:.1f}                 (Z0 = HOME height, do not go +Z)")
+    a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge)")
     a(f"{nxt()} G01 G41 D1 {xyz(*L['start_in'])} F{FEED_XY:.0f}  (G41 on LINE)")
     i_in, j_in = ij(L["start_in"], L["c_in"])
     a(
