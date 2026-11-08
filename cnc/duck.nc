@@ -13,7 +13,7 @@ N060 G00 X-25.000 Y240.000
 N070 G00 Z20.0
 N080 G00 Z5.0
 N090 G01 Z-5.0 F80        (plunge)
-N100 G41 D1 G01 X-25.000 Y200.000 F200    (lead-in to P2)
+N100 G01 G41 D1 X-25.000 Y200.000 F200    (lead-in, start G41 on LINE)
 N110 G01 X-25.000 Y150.000            (P2-P3 head right)
 N120 G03 X6.756 Y100.153 I55.000 J0.000    (P3-P4 R55 neck)
 N130 G01 X125.536 Y44.765            (P4-P5 25deg breast)
@@ -25,10 +25,11 @@ N180 G01 X-36.557 Y-159.760            (P9-P10 bottom)
 N190 G02 X-179.354 Y10.419 I0.000 J145.000    (P10-P11 R145 belly)
 N200 G01 X-144.088 Y210.419            (P11-P1 80deg left)
 N210 G02 X-25.000 Y200.000 I59.088 J-10.419    (P1-P2 R60 head)
-N220 G40 G01 X-25.000 Y240.000            (lead-out, cancel G41)
-N230 G00 Z20.0
-N240 G00 X50.000 Y260.000            (park)
-N250 M09
-N260 M05
-N270 M30
+N220 G01 X15.000 Y200.000            (lead-out linear, still G41)
+N230 G40 G01 X15.000 Y240.000        (cancel G41 on LINE, never on arc)
+N240 G00 Z20.0
+N250 G00 X50.000 Y260.000            (park)
+N260 M09
+N270 M05
+N280 M30
 %

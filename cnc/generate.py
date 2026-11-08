@@ -30,10 +30,14 @@ def xyz(x, y, n=3):
 
 def write_gcode(segs, pts, path: Path):
     P2 = pts["P2"]
-    # Lead-in / lead-out: extension of the first segment (vertical X=-25) above P2.
-    # Clockwise around the part + G41 → cutter to the left of travel = outside.
+    # Lead-in: above P2, move down onto the vertical edge (same direction as P2→P3).
+    # Lead-out: after R60 returns to P2 the tangent is downward; do NOT reverse up.
+    # Leave to the RIGHT (outside) on a LINEAR move, then cancel G40 on another G01.
+    # SwanSoft: "tool compensation couldn't be canceled by arc segment" if G40 rides a G02/G03.
     lead = 40.0
     pin = (P2[0], P2[1] + lead)  # (-25, 240)
+    pout1 = (P2[0] + 40.0, P2[1])  # (-25+40, 200) = (15, 200) outside
+    pout2 = (P2[0] + 40.0, P2[1] + lead)  # (15, 240)
     park = (50.0, 260.0)
 
     xs = [p[0] for k, p in pts.items() if k.startswith("P")]
@@ -64,7 +68,7 @@ def write_gcode(segs, pts, path: Path):
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
     a(f"{nxt()} G00 Z{RAPID_Z:.1f}")
     a(f"{nxt()} G01 Z{CUT_Z:.1f} F{FEED_Z:.0f}        (plunge)")
-    a(f"{nxt()} G41 D1 G01 {xyz(*P2)} F{FEED_XY:.0f}    (lead-in to P2)")
+    a(f"{nxt()} G01 G41 D1 {xyz(*P2)} F{FEED_XY:.0f}    (lead-in, start G41 on LINE)")
 
     comments = {
         "head_right": "P2-P3 head right",
@@ -88,7 +92,9 @@ def write_gcode(segs, pts, path: Path):
             i, j = ij(s.p0, s.center)
             a(f"{nxt()} {s.g} {xyz(*s.p1)} I{i:.3f} J{j:.3f}    ({note})")
 
-    a(f"{nxt()} G40 G01 {xyz(*pin)}            (lead-out, cancel G41)")
+    # Cancel cutter comp only on linear blocks (Fanuc / SwanSoft rule).
+    a(f"{nxt()} G01 {xyz(*pout1)}            (lead-out linear, still G41)")
+    a(f"{nxt()} G40 G01 {xyz(*pout2)}        (cancel G41 on LINE, never on arc)")
     a(f"{nxt()} G00 Z{SAFE_Z:.1f}")
     a(f"{nxt()} G00 {xyz(*park)}            (park)")
     a(f"{nxt()} M09")
