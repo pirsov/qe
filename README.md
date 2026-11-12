@@ -1,19 +1,30 @@
 # Контур детали для симулятора ЧПУ
 
-Управляющая программа фрезерования замкнутого контура по чертежу (радиусы R60, R55, R115, R145, R116). Стойка — **Fanuc / ISO**.
+Практическая работа по модулю 2 (**вариант 3**): эскиз, таблица точек, УП с коррекцией длины и диаметра. Стойка — **Fanuc / ISO**.
 
-## Файлы
+## Экзамен / практика (вариант 3)
 
 | Файл | Назначение |
 |------|------------|
-| [`cnc/duck.nc`](cnc/duck.nc) | Основная УП: заход, G41, контур, выход |
-| [`cnc/duck_preview.nc`](cnc/duck_preview.nc) | Тот же контур без коррекции — для просмотра в NC Viewer |
-| [`cnc/duck.dxf`](cnc/duck.dxf) | Контур для КОМПАС-3D (Файл → Открыть → Сохранить как `.cdw`) |
-| [`cnc/coordinates.md`](cnc/coordinates.md) | Опорные точки и проверки радиусов |
-| [`cnc/contour.png`](cnc/contour.png) | Чертёж контура с точками и заходом |
+| [`cnc/praktika_var3.md`](cnc/praktika_var3.md) | Отчёт по шаблону задания (эскиз, таблица, УП, защита) |
+| [`cnc/var3.nc`](cnc/var3.nc) | УП **O0003**: G43 + G41, фреза Ø16, Z−5, один проход |
+| [`cnc/var3_sketch.png`](cnc/var3_sketch.png) | Эскиз контура в XOY |
+
+В OFFSET: **H1** = длина инструмента, **D1 = 8.0** (радиус Ø16).
+
+## Дополнительно (старый контур «утка» для SwanSoft)
+
+| Файл | Назначение |
+|------|------------|
+| [`cnc/duck.nc`](cnc/duck.nc) | УП для SwanSoft (масштаб, −X/−Y) |
+| [`cnc/duck_preview.nc`](cnc/duck_preview.nc) | Контур без коррекции — для NC Viewer |
+| [`cnc/duck.dxf`](cnc/duck.dxf) | Контур для КОМПАС-3D |
+| [`cnc/coordinates.md`](cnc/coordinates.md) | Опорные точки старого контура |
+| [`cnc/contour.png`](cnc/contour.png) | Чертёж старого контура |
 | [`cnc/viewer.html`](cnc/viewer.html) | Просмотр траектории в браузере |
 | [`cnc/geometry.py`](cnc/geometry.py) | Расчёт сопряжений |
 | [`cnc/generate.py`](cnc/generate.py) | Пересборка УП и картинок |
+| [`cnc/attestaciya_voprosy.md`](cnc/attestaciya_voprosy.md) | Теория: устные ответы на 2–3 предложения |
 
 ## Как загрузить в симулятор (SwanSoft / Fanuc 0i-M)
 
