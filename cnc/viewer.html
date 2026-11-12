@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<title>Контур — просмотр G-code</title>
+<style>
+  :root { font-family: system-ui, sans-serif; background: #111; color: #eee; }
+  body { margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: .6rem 1rem; background: #1c1c1c; display: flex; gap: 1rem; align-items: center; }
+  button, input { font: inherit; }
+  canvas { flex: 1; background: #0b0b0b; }
+  #hud { font-variant-numeric: tabular-nums; opacity: .85; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Симулятор контура</strong>
+  <button id="play">Пуск</button>
+  <button id="reset">Сброс</button>
+  <label>Скорость <input id="spd" type="range" min="1" max="20" value="6"/></label>
+  <span id="hud">кадр —</span>
+</header>
+<canvas id="c"></canvas>
+<script>
+const NC = `
+G00 X-157.200 Y-35.000
+G01 X-157.200 Y-75.000
+G03 X-176.814 Y-75.000 I-9.807 J0.000
+G01 X-176.814 Y-99.517
+G03 X-161.242 Y-123.959 I26.969 J0.000
+G01 X-102.999 Y-151.119
+G03 X-74.253 Y-156.187 I23.831 J51.106
+G01 X-15.000 Y-151.003
+G01 X-46.504 Y-218.565
+G02 X-98.055 Y-251.406 I-51.551 J24.038
+G01 X-182.480 Y-251.406
+G02 X-252.500 Y-167.960 I0.000 J71.100
+G01 X-235.208 Y-69.891
+G02 X-176.814 Y-75.000 I28.974 J-5.109
+G03 X-167.007 Y-84.807 I9.807 J0.000
+G01 X-121.814 Y-84.807
+G01 X-121.814 Y-44.807
+G00 X-101.814 Y-15.000
+`;
+function parse(nc) {
+  let x=0,y=0, pts=[];
+  const push=(nx,ny,cut)=>{ pts.push({x:nx,y:ny,cut}); x=nx; y=ny; };
+  for (const raw of nc.trim().split("\n")) {
+    const line = raw.trim(); if (!line) continue;
+    const gx = /X(-?[\d.]+)/.exec(line);
+    const gy = /Y(-?[\d.]+)/.exec(line);
+    const gi = /I(-?[\d.]+)/.exec(line);
+    const gj = /J(-?[\d.]+)/.exec(line);
+    const nx = gx ? +gx[1] : x, ny = gy ? +gy[1] : y;
+    const cut = /G0[123]/.test(line);
+    if (/G0[23]/.test(line) && gi && gj) {
+      const cx=x+ +gi[1], cy=y+ +gj[1], r=Math.hypot(+gi[1], +gj[1]);
+      let a0=Math.atan2(y-cy,x-cx), a1=Math.atan2(ny-cy,nx-cx);
+      let da, cw=/G02/.test(line);
+      if (cw) { da=a0-a1; if (da<=0) da+=Math.PI*2; }
+      else { da=a1-a0; if (da<=0) da+=Math.PI*2; }
+      const n=Math.max(12, Math.round(da*40));
+      for (let i=1;i<=n;i++) {
+        const t=a0+(cw?-1:1)*da*i/n;
+        push(cx+r*Math.cos(t), cy+r*Math.sin(t), true);
+      }
+    } else if (gx || gy) push(nx,ny,cut);
+  }
+  return pts;
+}
+const pts = parse(NC);
+const cv=document.getElementById("c"), ctx=cv.getContext("2d");
+let i=0, playing=false;
+function fit() {
+  cv.width=cv.clientWidth; cv.height=cv.clientHeight;
+  const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
+  const minx=Math.min(...xs)-20, maxx=Math.max(...xs)+20;
+  const miny=Math.min(...ys)-20, maxy=Math.max(...ys)+20;
+  const sx=cv.width/(maxx-minx), sy=cv.height/(maxy-miny), s=Math.min(sx,sy);
+  return p => [(p.x-minx)*s + (cv.width-(maxx-minx)*s)/2,
+               cv.height-((p.y-miny)*s + (cv.height-(maxy-miny)*s)/2)];
+}
+function draw() {
+  const T=fit();
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.lineWidth=2;
+  for (let k=1;k<pts.length;k++) {
+    ctx.beginPath();
+    ctx.strokeStyle = pts[k].cut ? (k<=i ? "#e74c3c" : "#333") : "#2c3e50";
+    const a=T(pts[k-1]), b=T(pts[k]);
+    ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+  }
+  const p=T(pts[Math.min(i,pts.length-1)]);
+  ctx.fillStyle="#2ecc71"; ctx.beginPath(); ctx.arc(p[0],p[1],6,0,Math.PI*2); ctx.fill();
+  document.getElementById("hud").textContent = `точка ${Math.min(i,pts.length-1)} / ${pts.length-1}   X ${pts[Math.min(i,pts.length-1)].x.toFixed(2)}  Y ${pts[Math.min(i,pts.length-1)].y.toFixed(2)}`;
+}
+function tick() {
+  if (playing) {
+    i = Math.min(i + +document.getElementById("spd").value, pts.length-1);
+    if (i>=pts.length-1) playing=false;
+  }
+  draw();
+  requestAnimationFrame(tick);
+}
+document.getElementById("play").onclick=()=>{ if(i>=pts.length-1) i=0; playing=true; };
+document.getElementById("reset").onclick=()=>{ i=0; playing=false; };
+window.onresize=draw;
+tick();
+</script>
+</body>
+</html>
